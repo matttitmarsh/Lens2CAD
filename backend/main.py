@@ -48,7 +48,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Lens2CAD API", lifespan=lifespan)
 
 # Get configuration from environment variables
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+# Get configuration from environment variables
+# Robustly parse allowed origins: split by comma, strip whitespace, and remove trailing slashes
+raw_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+ALLOWED_ORIGINS = [origin.strip().rstrip("/") for origin in raw_origins if origin.strip()]
+print(f"Allowed Origins: {ALLOWED_ORIGINS}")
+
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
 app.add_middleware(
@@ -65,6 +70,11 @@ app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 app.mount("/static", StaticFiles(directory="."), name="static")
 
 scanner = ShapeScanner()
+
+@app.get("/")
+async def root():
+    """Root endpoint - redirects to health check"""
+    return {"status": "ok", "message": "Lens2CAD API", "health_endpoint": "/health"}
 
 @app.get("/health")
 def health_check():
