@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { Upload, FileDown, Loader2, Scan, CheckCircle, AlertCircle, ArrowRight } from "lucide-react";
 import { clsx } from "clsx";
@@ -73,6 +73,45 @@ export default function Home() {
     }
   };
 
+  const [isWakingUp, setIsWakingUp] = useState(false);
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+        const res = await fetch(`${API_URL}/health`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          return true;
+        }
+      } catch (e) {
+        return false;
+      }
+      return false;
+    };
+
+    const init = async () => {
+      // Initial check
+      const ready = await checkHealth();
+      if (!ready) {
+        setIsWakingUp(true);
+        // Poll until ready
+        const interval = setInterval(async () => {
+          const isReady = await checkHealth();
+          if (isReady) {
+            setIsWakingUp(false);
+            clearInterval(interval);
+          }
+        }, 3000);
+      }
+    };
+
+    init();
+  }, []);
+
   return (
     <main className="min-h-screen bg-neutral-950 text-white selection:bg-indigo-500/30">
       {/* Header */}
@@ -87,6 +126,16 @@ export default function Home() {
             <Link href="/documentation" className="hover:text-white transition-colors">Documentation</Link>
           </div>
         </div>
+
+        {/* Wake Up Banner */}
+        {isWakingUp && (
+          <div className="bg-indigo-500/10 border-b border-indigo-500/20 py-2 px-4 text-center animate-in slide-in-from-top-2">
+            <p className="text-sm text-indigo-300 flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Waking up the AI engines... this may take about 30 seconds.
+            </p>
+          </div>
+        )}
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-12">
