@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+opencv-python
+numpy
+ezdxf
+svgwrite
+img2pdf
+rembg
+onnxruntime
