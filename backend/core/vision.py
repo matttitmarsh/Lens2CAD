@@ -4,6 +4,7 @@ import ezdxf
 import svgwrite
 import os
 from typing import List, Tuple, Optional, Dict
+from rembg import remove, new_session
 
 class ShapeScanner:
     def __init__(self):
@@ -14,6 +15,9 @@ class ShapeScanner:
         self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
         self.aruco_params = cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
+        
+        # Initialize rembg session with u2netp (lightweight model) to prevent OOM
+        self.rembg_session = new_session("u2netp")
         
         # Marker positions on the A4 sheet (mm) relative to top-left
         # Margins were 20mm, marker size 30mm
@@ -80,8 +84,6 @@ class ShapeScanner:
         """
         Extract contours from the warped image using rembg for AI-based segmentation.
         """
-        # Import here to avoid loading it if not used, or move to top
-        from rembg import remove
         
         # rembg expects the image. It handles the segmentation.
         # It returns an image with an alpha channel (BGRA).
@@ -92,8 +94,8 @@ class ShapeScanner:
         # It returns a numpy array if input is numpy array.
         
         # Remove background
-        # This might take a moment on the first run to download the model (~170MB).
-        output = remove(image)
+        # Use the pre-initialized session with u2netp
+        output = remove(image, session=self.rembg_session)
         
         # Extract alpha channel
         if output.shape[2] == 4:
