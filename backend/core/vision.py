@@ -16,8 +16,8 @@ class ShapeScanner:
         self.aruco_params = cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
         
-        # Initialize rembg session with u2netp (lightweight model) to prevent OOM
-        self.rembg_session = new_session("u2netp")
+        # Initialize rembg session lazily to prevent startup OOM
+        self.rembg_session = None
         
         # Marker positions on the A4 sheet (mm) relative to top-left
         # Margins were 20mm, marker size 30mm
@@ -94,6 +94,11 @@ class ShapeScanner:
         # It returns a numpy array if input is numpy array.
         
         # Remove background
+        # Lazy load the session if not already initialized
+        if self.rembg_session is None:
+            print("Initializing rembg session (u2netp)...")
+            self.rembg_session = new_session("u2netp")
+            
         # Use the pre-initialized session with u2netp
         output = remove(image, session=self.rembg_session)
         
