@@ -5,6 +5,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from core.vision import ShapeScanner
@@ -75,7 +76,6 @@ app.add_middleware(
 )
 
 # Mount output directory
-
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 app.mount("/static", StaticFiles(directory="."), name="static")
 
@@ -89,6 +89,26 @@ async def root():
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "Lens2CAD Backend"}
+
+@app.get("/download/{request_id}/{filename}")
+async def download_file(request_id: str, filename: str):
+    """
+    Serve files with Content-Disposition attachment to force download
+    """
+    # Basic path traversal protection
+    if ".." in request_id or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid path")
+        
+    file_path = os.path.join(OUTPUT_DIR, request_id, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    return FileResponse(
+        file_path, 
+        media_type="application/octet-stream", 
+        filename=filename,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 @app.post("/upload")
 async def upload_image(file: UploadFile = File(...)):
@@ -108,12 +128,12 @@ async def upload_image(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail=result["error"])
             
         # Construct URLs
-        # The static mount is at /output, so we need to include the request_id
+        # Use the /download endpoint to force browser download
         svg_filename = os.path.basename(result['svg_path'])
         dxf_filename = os.path.basename(result['dxf_path'])
         
-        result["svg_url"] = f"{BASE_URL}/output/{request_id}/{svg_filename}"
-        result["dxf_url"] = f"{BASE_URL}/output/{request_id}/{dxf_filename}"
+        result["svg_url"] = f"{BASE_URL}/download/{request_id}/{svg_filename}"
+        result["dxf_url"] = f"{BASE_URL}/download/{request_id}/{dxf_filename}"
         
         return result
     except Exception as e:
