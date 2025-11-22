@@ -128,12 +128,14 @@ async def upload_image(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail=result["error"])
             
         # Construct URLs
-        # Use the /download endpoint to force browser download
+        # Preview URL points to static mount (inline display)
+        # Download URL points to download endpoint (attachment)
         svg_filename = os.path.basename(result['svg_path'])
         dxf_filename = os.path.basename(result['dxf_path'])
         
-        result["svg_url"] = f"{BASE_URL}/download/{request_id}/{svg_filename}"
-        result["dxf_url"] = f"{BASE_URL}/download/{request_id}/{dxf_filename}"
+        result["svg_preview_url"] = f"{BASE_URL}/output/{request_id}/{svg_filename}"
+        result["svg_download_url"] = f"{BASE_URL}/download/{request_id}/{svg_filename}"
+        result["dxf_download_url"] = f"{BASE_URL}/download/{request_id}/{dxf_filename}"
         
         return result
     except Exception as e:

@@ -249,7 +249,7 @@ export default function Home() {
                 <div className="flex-1 bg-white/5 relative flex items-center justify-center p-8 overflow-hidden">
                   {/* SVG Preview */}
                   <img
-                    src={result.svg_url}
+                    src={result.svg_preview_url}
                     alt="Processed SVG"
                     className="max-w-full max-h-full shadow-2xl object-contain"
                   />
@@ -268,7 +268,7 @@ export default function Home() {
 
                   <div className="space-y-3">
                     <a
-                      href={result.svg_url}
+                      href={result.svg_download_url}
                       download
                       target="_blank"
                       rel="noopener noreferrer"
@@ -287,7 +287,7 @@ export default function Home() {
                     </a>
 
                     <a
-                      href={result.dxf_url}
+                      href={result.dxf_download_url}
                       download
                       target="_blank"
                       rel="noopener noreferrer"
