@@ -3,6 +3,7 @@ import numpy as np
 import ezdxf
 import svgwrite
 import os
+import gc
 from typing import List, Tuple, Optional, Dict
 from rembg import remove, new_session
 
@@ -68,8 +69,9 @@ class ShapeScanner:
             return None, 0.0
 
         # Destination points (pixels)
-        # We want high resolution for the output. Let's say 10 pixels per mm.
-        scale = 10.0 # pixels per mm
+        # Reduced scale from 10.0 to 5.0 to save memory on Render free tier (512MB RAM)
+        # 5 px/mm is still 0.2mm precision, which is sufficient for this use case.
+        scale = 5.0 # pixels per mm
         dst_width = int(self.A4_WIDTH_MM * scale)
         dst_height = int(self.A4_HEIGHT_MM * scale)
         
@@ -130,7 +132,7 @@ class ShapeScanner:
         
         # 1. Mask borders
         border_mm = 5
-        scale = 10.0 
+        scale = 5.0 # Updated to match the new scale
         border_px = int(border_mm * scale)
         h, w = mask.shape
         cv2.rectangle(safety_mask, (0, 0), (w, border_px), 0, -1) 
@@ -163,7 +165,7 @@ class ShapeScanner:
         contours, hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         # Filter small contours (noise)
-        min_area = 500 # Reduced min area to catch thinner parts if they are fragmented
+        min_area = 500 * (scale / 10.0)**2 # Adjust min area for new scale (approx)
         
         # Text zone filtering
         # The text "Lens2CAD Reference Sheet (A4)" is in the middle of the page on the current sheet.
@@ -253,64 +255,78 @@ class ShapeScanner:
         if image is None:
             return {"error": "Could not decode image"}
 
-        # Detect markers
-        corners, ids = self.detect_markers(image)
-        
-        # Correct perspective
-        warped, scale = self.correct_perspective(image, corners, ids)
-        
-        if warped is None:
-            return {"error": "Could not correct perspective (markers missing?)"}
-
-        # Extract contours
-        contours = self.extract_contours(warped)
-        
-        if not contours:
-             return {"error": "No object detected"}
-
-        # Normalize coordinates to (0,0)
-        # Find min_x and min_y across all contours
-        all_points = np.vstack(contours).reshape(-1, 2)
-        min_x, min_y = np.min(all_points, axis=0)
-        max_x, max_y = np.max(all_points, axis=0)
-        
-        # Shift all contours
-        normalized_contours = []
-        for c in contours:
-            # c is (N, 1, 2)
-            c_shifted = c.copy()
-            c_shifted[:, 0, 0] -= min_x
-            c_shifted[:, 0, 1] -= min_y
-            normalized_contours.append(c_shifted)
+        try:
+            # Detect markers
+            corners, ids = self.detect_markers(image)
             
-        # Calculate new dimensions for SVG viewbox
-        width_mm = (max_x - min_x) / scale
-        height_mm = (max_y - min_y) / scale
-        
-        # Add a small padding to the viewbox so it's not tight against the edge
-        padding_mm = 5
-        viewbox_width_mm = width_mm + 2 * padding_mm
-        viewbox_height_mm = height_mm + 2 * padding_mm
-        
-        # Shift contours again for the padding in SVG (optional, but good for viewing)
-        # Actually, for CAD (DXF), user wants (0,0). For SVG, (0,0) is top-left.
-        # If we shift by min_x, min_y, the object starts exactly at 0,0.
-        # Let's pass the normalized contours to the generators.
-        # But for SVG, we might want to adjust the viewbox to fit the object exactly (plus padding).
+            # Correct perspective
+            warped, scale = self.correct_perspective(image, corners, ids)
+            
+            if warped is None:
+                return {"error": "Could not correct perspective (markers missing?)"}
 
-        # Generate outputs
-        base_filename = "output"
-        svg_path = os.path.join(output_dir, f"{base_filename}.svg")
-        dxf_path = os.path.join(output_dir, f"{base_filename}.dxf")
-        
-        # For SVG, we want to set the viewbox size to the object size
-        self.generate_svg(normalized_contours, scale, svg_path, viewbox_size=(width_mm, height_mm))
-        self.generate_dxf(normalized_contours, scale, dxf_path)
+            # Free up memory: we don't need the original image anymore
+            del image
+            del nparr
+            gc.collect()
 
-        return {
-            "status": "success",
-            "scale": scale,
-            "contours_count": len(contours),
-            "svg_path": svg_path,
-            "dxf_path": dxf_path
-        }
+            # Extract contours
+            contours = self.extract_contours(warped)
+            
+            # Free up memory: we don't need the warped image anymore
+            del warped
+            gc.collect()
+            
+            if not contours:
+                 return {"error": "No object detected"}
+
+            # Normalize coordinates to (0,0)
+            # Find min_x and min_y across all contours
+            all_points = np.vstack(contours).reshape(-1, 2)
+            min_x, min_y = np.min(all_points, axis=0)
+            max_x, max_y = np.max(all_points, axis=0)
+            
+            # Shift all contours
+            normalized_contours = []
+            for c in contours:
+                # c is (N, 1, 2)
+                c_shifted = c.copy()
+                c_shifted[:, 0, 0] -= min_x
+                c_shifted[:, 0, 1] -= min_y
+                normalized_contours.append(c_shifted)
+                
+            # Calculate new dimensions for SVG viewbox
+            width_mm = (max_x - min_x) / scale
+            height_mm = (max_y - min_y) / scale
+            
+            # Add a small padding to the viewbox so it's not tight against the edge
+            padding_mm = 5
+            viewbox_width_mm = width_mm + 2 * padding_mm
+            viewbox_height_mm = height_mm + 2 * padding_mm
+            
+            # Shift contours again for the padding in SVG (optional, but good for viewing)
+            # Actually, for CAD (DXF), user wants (0,0). For SVG, (0,0) is top-left.
+            # If we shift by min_x, min_y, the object starts exactly at 0,0.
+            # Let's pass the normalized contours to the generators.
+            # But for SVG, we might want to adjust the viewbox to fit the object exactly (plus padding).
+
+            # Generate outputs
+            base_filename = "output"
+            svg_path = os.path.join(output_dir, f"{base_filename}.svg")
+            dxf_path = os.path.join(output_dir, f"{base_filename}.dxf")
+            
+            # For SVG, we want to set the viewbox size to the object size
+            self.generate_svg(normalized_contours, scale, svg_path, viewbox_size=(width_mm, height_mm))
+            self.generate_dxf(normalized_contours, scale, dxf_path)
+
+            return {
+                "status": "success",
+                "scale": scale,
+                "contours_count": len(contours),
+                "svg_path": svg_path,
+                "dxf_path": dxf_path
+            }
+        except Exception as e:
+            # Ensure cleanup on error
+            gc.collect()
+            raise e
