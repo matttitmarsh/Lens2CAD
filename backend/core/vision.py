@@ -3,7 +3,6 @@ import numpy as np
 import ezdxf
 import svgwrite
 import os
-import gc
 from typing import List, Tuple, Optional, Dict
 from rembg import remove, new_session
 
@@ -17,7 +16,7 @@ class ShapeScanner:
         self.aruco_params = cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
         
-        # Initialize rembg session lazily to prevent startup OOM
+        # Initialize rembg session lazily
         self.rembg_session = None
         
         # Marker positions on the A4 sheet (mm) relative to top-left
@@ -69,9 +68,8 @@ class ShapeScanner:
             return None, 0.0
 
         # Destination points (pixels)
-        # Reduced scale from 10.0 to 5.0 to save memory on Render free tier (512MB RAM)
-        # 5 px/mm is still 0.2mm precision, which is sufficient for this use case.
-        scale = 5.0 # pixels per mm
+        # Restored high resolution scale (10.0 px/mm) for Hugging Face Spaces (16GB RAM)
+        scale = 10.0 # pixels per mm
         dst_width = int(self.A4_WIDTH_MM * scale)
         dst_height = int(self.A4_HEIGHT_MM * scale)
         
@@ -87,52 +85,32 @@ class ShapeScanner:
         Extract contours from the warped image using rembg for AI-based segmentation.
         """
         
-        # rembg expects the image. It handles the segmentation.
-        # It returns an image with an alpha channel (BGRA).
-        # The alpha channel is our mask.
-        
-        # rembg works best with PIL or bytes, but supports numpy.
-        # Let's ensure it's in a format it likes.
-        # It returns a numpy array if input is numpy array.
-        
         # Remove background
         # Lazy load the session if not already initialized
         if self.rembg_session is None:
-            print("Initializing rembg session (u2netp)...")
-            self.rembg_session = new_session("u2netp")
+            print("Initializing rembg session (u2net)...")
+            # Switched back to standard 'u2net' model for better quality
+            self.rembg_session = new_session("u2net")
             
-        # Use the pre-initialized session with u2netp
+        # Use the pre-initialized session
         output = remove(image, session=self.rembg_session)
         
         # Extract alpha channel
         if output.shape[2] == 4:
             alpha = output[:, :, 3]
         else:
-            # Fallback if something weird happens, though rembg usually returns RGBA
-            # If it returns RGB (no background removed?), we might need to check docs.
-            # But standard behavior is RGBA.
-            # Let's assume it worked.
-            # If not, we might need to threshold the output against a white background?
-            # But remove() usually makes background transparent.
-            # Let's try to find the alpha.
             print("Warning: rembg output does not have 4 channels.")
             return []
 
         # Threshold the alpha channel to get a binary mask
-        # Alpha is 0 (transparent) to 255 (opaque).
-        # We want opaque regions.
         ret, mask = cv2.threshold(alpha, 127, 255, cv2.THRESH_BINARY)
         
-        # Mask out the markers and borders (still good practice to ensure no artifacts)
-        # Although rembg should handle markers if they look like background, 
-        # sometimes it keeps them if they look like objects.
-        # Let's keep our safety mask.
-        
+        # Mask out the markers and borders
         safety_mask = np.ones(mask.shape, dtype=np.uint8) * 255
         
         # 1. Mask borders
         border_mm = 5
-        scale = 5.0 # Updated to match the new scale
+        scale = 10.0 
         border_px = int(border_mm * scale)
         h, w = mask.shape
         cv2.rectangle(safety_mask, (0, 0), (w, border_px), 0, -1) 
@@ -165,13 +143,9 @@ class ShapeScanner:
         contours, hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         # Filter small contours (noise)
-        min_area = 500 * (scale / 10.0)**2 # Adjust min area for new scale (approx)
+        min_area = 500 # Standard min area for 10.0 scale
         
         # Text zone filtering
-        # The text "Lens2CAD Reference Sheet (A4)" is in the middle of the page on the current sheet.
-        # We want to ignore contours that are fully inside this zone.
-        # A4 height 297mm. Center is ~148.5mm.
-        # Let's define a zone +/- 20mm from the center.
         text_zone_y_center = self.A4_HEIGHT_MM / 2
         text_zone_height = 40 # mm
         text_zone_y_min = (text_zone_y_center - text_zone_height / 2) * scale
@@ -184,15 +158,7 @@ class ShapeScanner:
                 
             # Check if contour is inside text zone
             x, y, w, h = cv2.boundingRect(c)
-            # If the contour is fully within the vertical band of the text
-            # AND it's not too big (the object might cross it, but small text bits will be inside)
             if y > text_zone_y_min and (y + h) < text_zone_y_max:
-                # It's in the text band.
-                # Only filter if it looks like text (small-ish).
-                # If it's a huge object part that just happens to be in the middle, we might want to keep it?
-                # But the user's object is likely larger than the text band or crosses it.
-                # If the object is small and placed exactly on the text, it will be lost.
-                # This is a trade-off for the legacy sheet.
                 continue
             
             valid_contours.append(c)
@@ -200,8 +166,6 @@ class ShapeScanner:
         # Simplify contours (Douglas-Peucker)
         simplified_contours = []
         for c in valid_contours:
-            # Reduced epsilon to 0.05% for high detail retention
-            # This will result in more points but much smoother curves and less "low-poly" look
             epsilon = 0.0005 * cv2.arcLength(c, True) 
             approx = cv2.approxPolyDP(c, epsilon, True)
             simplified_contours.append(approx)
@@ -265,17 +229,8 @@ class ShapeScanner:
             if warped is None:
                 return {"error": "Could not correct perspective (markers missing?)"}
 
-            # Free up memory: we don't need the original image anymore
-            del image
-            del nparr
-            gc.collect()
-
             # Extract contours
             contours = self.extract_contours(warped)
-            
-            # Free up memory: we don't need the warped image anymore
-            del warped
-            gc.collect()
             
             if not contours:
                  return {"error": "No object detected"}
@@ -299,17 +254,9 @@ class ShapeScanner:
             width_mm = (max_x - min_x) / scale
             height_mm = (max_y - min_y) / scale
             
-            # Add a small padding to the viewbox so it's not tight against the edge
+            # Add a small padding to the viewbox
             padding_mm = 5
-            viewbox_width_mm = width_mm + 2 * padding_mm
-            viewbox_height_mm = height_mm + 2 * padding_mm
             
-            # Shift contours again for the padding in SVG (optional, but good for viewing)
-            # Actually, for CAD (DXF), user wants (0,0). For SVG, (0,0) is top-left.
-            # If we shift by min_x, min_y, the object starts exactly at 0,0.
-            # Let's pass the normalized contours to the generators.
-            # But for SVG, we might want to adjust the viewbox to fit the object exactly (plus padding).
-
             # Generate outputs
             base_filename = "output"
             svg_path = os.path.join(output_dir, f"{base_filename}.svg")
@@ -327,6 +274,4 @@ class ShapeScanner:
                 "dxf_path": dxf_path
             }
         except Exception as e:
-            # Ensure cleanup on error
-            gc.collect()
             raise e
