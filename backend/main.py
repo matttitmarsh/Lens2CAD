@@ -48,7 +48,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Lens2CAD API", lifespan=lifespan)
 
 # Get configuration from environment variables
-# Get configuration from environment variables
 # Robustly parse allowed origins: split by comma, strip whitespace, and remove trailing slashes
 raw_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 ALLOWED_ORIGINS = [origin.strip().rstrip("/") for origin in raw_origins if origin.strip()]
@@ -56,9 +55,14 @@ print(f"Allowed Origins: {ALLOWED_ORIGINS}")
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
+# Regex to allow any Vercel deployment (e.g., https://lens2cad-*.vercel.app)
+# This is safer than allowing all origins but flexible enough for previews
+VERCEL_REGEX = r"https://.*\.vercel\.app"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=VERCEL_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
