@@ -18,7 +18,12 @@ ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH
 
 # Set working directory to the user's home directory
+# Set working directory to the user's home directory
 WORKDIR $HOME/app
+
+# Copy requirements first to leverage Docker cache
+COPY --chown=user requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the current directory contents into the container at $HOME/app setting the owner to the user
 COPY --chown=user . $HOME/app
